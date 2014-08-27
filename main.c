@@ -25,6 +25,7 @@ char * bookorders;
 int flags = -1;
 double revenue;
 pthread_mutex_t grill;
+pthread_cond_t finis;
 
 sbuf_t * consumers;
 
@@ -50,13 +51,12 @@ struct SharedData {
     sem_t		full_count;
     sem_t		use_queue;	// mutual exclusion
 };
-
+int ex_con;
 struct OverSharedData{
     struct SharedData ** rep;
     int rop;
 };
 
-pthread_cond_t finis;
 
 void
 initialize( struct SharedData * sptr, int rc )		// Looks like a ctor
@@ -131,29 +131,31 @@ void* Producer(void *arg)
         char * cat_name = strtok_r(NULL, delim, &rpr);
         int thread_number = translate(cat_name);
         
-        printf("Title: %s\n, cat_name:%s thread number: %d\n", title, cat_name, thread_number);
+       printf("Producer processes: %s\n", title);
         NodePtr sert = NULL;
         sert = NodalCreate(title, cost, id, cat_name, 0);
         
         struct SharedData * d = *((de->rep)+thread_number);
         int ge = -1;
-        while (fifo_len(d->queue)==10) {
+     
+        
+        if (fifo_len(d->queue)==10) {
             ge++;
             if(ge==0){
                 printf("Producer waits, buffer is full\n");}
-            continue;
+            
         }
+        sem_wait( &d->empty_count );
         if(ge>-1){
             printf("Producer resumes, buffer has space\n");
         }
-        
-        sem_wait( &d->empty_count );
         sem_wait( &d->use_queue );
         
         fifo_add(d->queue, sert);
         
         sem_post( &d->use_queue );
         sem_post( &d->full_count );
+       
         
     }
     int sum = 0;
@@ -163,39 +165,33 @@ void* Producer(void *arg)
     NodePtr no = NodalCreate("ABHISHEKSAHAEMPTY", 1.2, 2, "ABHISHEKSAHAEMPTY", 0);
     for(sum=0; sum<consumerthreads; sum++){
         struct  SharedData * d= *((de->rep)+sum);
+        sem_wait( &d->empty_count );
+        sem_wait( &d->use_queue );
         fifo_add(d->queue, no);
+        sem_post( &d->use_queue );
+        sem_post( &d->full_count );
+
+    
         
     }
-    
+  
     
     free(buffer);
     fclose(f);
-    int i =9;
+ 
     pthread_mutex_t rew;
-    pthread_mutex_init(&rew, 0);
     
-    for (i=0; i<100000000; i++) {
-      
-        
-        
-    }
-    /*
-    for (i=0; i<consumerthreads; i++) {
-        struct SharedData * d= *((de->rep)+i);
-        pthread_mutex_lock(&rew);
-        pthread_cond_wait(&d->buffer_empty, &rew);
-    }*/
-    
-    
-    printf("Revenue: %f\n", revenue);
    
-    return NULL;
+   
+  
+    pthread_exit(NULL);
 }
 
 void printout(){
     
     FILE * f = fopen(dtabase, "r");
     FILE* fp = fopen("finalorder.txt", "w");
+    fprintf(fp, "TOTAL REVENUE: %f\n\n", revenue);
     char * buffer = (char *)malloc(1000);
     char c = fgetc(f);
     int i = 0;
@@ -207,7 +203,7 @@ void printout(){
         }
         
         char delim[2] = "|";
-                
+        
         
         char * first_name = strtok(buffer, delim);
         first_name = first_name +1;
@@ -217,9 +213,9 @@ void printout(){
         ident = atoi(strtok(NULL, delim));
         credit = atof(strtok(NULL, delim));
         
-      
+        
         HashBucket * entry = (HashBucket*)malloc(sizeof(HashBucket));
-
+        
         HASH_FIND_INT(users, &ident, entry);
         fprintf(fp, "START CUSTOMER INFO\n");
         fprintf(fp, "Customer Name: %s\n", entry->uzer->name);
@@ -238,7 +234,7 @@ void printout(){
             nop = fifo_remove(bad);
             fprintf(fp, "%s | %f \n", nop->title, nop->cost);
         }
-        fprintf(fp, "END CUSTOMER INFO\n");
+        fprintf(fp, "END CUSTOMER INFO\n\n");
         i = 0;
         *buffer = '\0';
         c = fgetc(f);
@@ -247,58 +243,80 @@ void printout(){
     rewind(f);
     fclose(f);
     
-
+    
 }
 
 void* Consumer(void *arg){
-    
+ 
     struct SharedData * d = (struct SharedData*)arg;
     printf("Entered Consumer %d\n", d->da);
     HashBucket * u_lookup;
     
     double current_wallet = -.1;
     int i = 0;
+    
     for(;;) {
-        
         fifo_t * remy = d->queue;
-        
         if (fifo_len(remy)==0) {
             if(i==0){
                 printf("Consumer: %d waits, buffer empty\n", d->da);
                 i++;
-                }
+            }}
+        sem_wait( &d->full_count );
+		sem_wait( &d->use_queue );
+                
+        if (fifo_len(remy)==0) {
+            if(i==0){
+                printf("Consumer: %d waits, buffer empty\n", d->da);
+                i++;
+            }
+            sem_post( &d->use_queue );
+            sem_post( &d->empty_count );
             continue;
         }
         
         if(i>0){
-            printf("Consumer resumes, buffer has value\n");}
+            printf("Consumer %d resumes, buffer has value\n", d->da);}
         i=0;
-        sem_wait( &d->full_count );
-		sem_wait( &d->use_queue );
+        
         
         
         NodePtr nop = (NodePtr)fifo_remove(remy);
-        printf("Con-title: %s ThreadNumba: %d\n", nop->title, d->da);
+                
+        
         if (strcmp(nop->title, "ABHISHEKSAHAEMPTY")==0) {
+            
+            
+            ex_con = ex_con +1;
+            
+           
+            
             sem_post( &d->use_queue );
             sem_post( &d->empty_count );
-            pthread_cond_broadcast(&d->buffer_empty);
-            return NULL;
-           
+            
+            
+            break;
         }
-        
+        int g = 9;
+        for (i=0; i<1000; i++) {
+            g++;
+        }
         
         pthread_mutex_lock(&grill);
         HASH_FIND_INT(users, &(nop->ID), u_lookup);
         current_wallet = u_lookup->uzer->wallet;
+        
+
         if ((nop->cost)>current_wallet) {
             fifo_add(u_lookup->uzer->reject, nop);
+            printf("Rejected- Purchaser: %s, Book title: %s, Book price: %f, Remaining Credit Limit: %f\n", u_lookup->uzer->name, nop->title, nop->cost, u_lookup->uzer->wallet);
         }
         else{
             revenue += nop->cost;
             u_lookup->uzer->wallet  = u_lookup->uzer->wallet - nop->cost;
             nop->balance =  u_lookup->uzer->wallet;
             fifo_add(u_lookup->uzer->accept, nop);
+            printf("Accepted- Book Title: %s, Book price: %f, Purchaser: %s, Address: %s, %s, %d\n", nop->title, nop->cost, u_lookup->uzer->name, u_lookup->uzer->address, u_lookup->uzer->state, u_lookup->uzer->zip);
             
         }
         
@@ -309,17 +327,27 @@ void* Consumer(void *arg){
     
     
     
-    
+    return NULL;
     
 }
 
+
+
 int main(int argc, const char * argv[])
 {
-    pthread_cond_init(&finis, 0);
+    if (argc>3) {
+        printf("Too many arguments\n");
+        return -1;
+    }
+    if (argc<3) {
+        printf("too few arguments\n");
+        return -1;
+    }
     revenue = 0;
+    ex_con =0;
     databases(argv[1]); /* Takes care of setting up the database*/
-    categories(argv[2]); /*Takes care of setting up the book categories*/
-    bookorders = argv[3];
+    categories(argv[3]); /*Takes care of setting up the book categories*/
+    bookorders = argv[2];
     struct OverSharedData* remp = (struct OverSharedData*)malloc(sizeof(struct OverSharedData));
     rennit(remp);
     struct SharedData * d = *(remp->rep + 0);
@@ -350,7 +378,7 @@ int main(int argc, const char * argv[])
     
     //pthread_join() HERE!!!!
     //print final results
-    printf("\nPRINT INT RESULTS\n");
+    printf("Revenue: %f \n\n", revenue);
     printout();
     
     return 0;
@@ -433,7 +461,7 @@ void databases(char * database){
         }
         
         char delim[2] = "|";
-               
+        
         
         char * first_name = strtok(buffer, delim);
         first_name = first_name +1;
@@ -442,8 +470,17 @@ void databases(char * database){
         int ident = -1; double credit = -1;
         ident = atoi(strtok(NULL, delim));
         credit = atof(strtok(NULL, delim));
-        
-        PacketPtr tomp = PCreate(first_name, credit);
+        char * address = strtok(NULL, delim);
+        address = address+1;
+        *(address + strlen(address)-1) = '\0';
+        char * state = strtok(NULL, delim);
+        state = state +1;
+        *(state + strlen(state) -1) = '\0';
+        char del[2] = "\n";
+        char * zip = strtok(NULL, del);
+        *(zip+5) = '\0';
+        int z = atoi(zip);
+        PacketPtr tomp = PCreate(first_name, credit, address, state, z);
         HashBucket * entry = (HashBucket*)malloc(sizeof(HashBucket));
         entry->uzer = tomp;
         entry->ID = ident;
@@ -458,10 +495,17 @@ void databases(char * database){
     
 }
 
-PacketPtr PCreate(char *name, double wallet){
+PacketPtr PCreate(char *name, double wallet, char * address, char * state, int zip){
     PacketPtr nop = (PacketPtr)malloc(sizeof(Packet));
     char * tempname = (char *)malloc(sizeof(char)*(strlen(name)+1));
     strcpy(tempname, name);
+    char * st = (char*)malloc(sizeof(char)*strlen(state));
+    strcpy(st, state);
+    char * ad = (char *)malloc(sizeof(char)*strlen(address));
+    strcpy(ad, address);
+    nop->state = st;
+    nop->address = ad;
+    nop->zip = zip;
     nop->name = tempname;
     nop->wallet = wallet;
     nop->accept = fifo_new();
